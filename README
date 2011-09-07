@@ -1,0 +1,18 @@
+STQuery is written in javascript currently. It allows users to manipulate html strings using jquery method names, instead of directly manipulating upon the DOM. STQuery benefits mainly by manipulating large html templates before rerendering on the page. JQuery can already handle manipulating small html fragments. STQuery is designed to be dom independent, so that when page rendering using jquery becomes delayed, slow or intermittent, the developer can manipulate the html string multiple times before writing it to the dom.
+
+Due to the code working on html strings, STQuery can be ported over to a server side language such as php, c#, java etc to manipulate html templates. This opens up a new approach to online content menagment systems, by allowing logic to be kept completely outside of the html template mockups. 
+
+STQuery is currently growing in its ability to apply css2 and css3 type selectors. When this has reached its full potential, it will be ported over to server side languages to provide complete html manipulation server side.
+
+A typical example of use would be:
+
+var ST = new STQuery('<html>...</html>');
+ST.find('.item:eq(2)').addClass('2ndItem');
+ST.find('#mainPanel').append('whatever...');
+ST.find('h5.title').html('this is the 5th title');
+var strOutput = ST.html();
+
+
+STquery was inspired by jQuery and created by Steve Tomlin in march 2011.
+
+For more information please contact steve@stquery.com
