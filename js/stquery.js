@@ -1,12 +1,8 @@
-﻿                                                                     
-                                                                     
-                                                                     
-                                             
-﻿//################################
+﻿﻿//################################
 //ST Query (String Query)
 //Author: Steve Tomlin
-//Date updated: 2011-07-15_2000
-//Version: 0.8 Alpha
+//Date updated: 2011-09-01_2000
+//Version: 0.92 Alpha
 //Licence: MIT or GNU
 //Works like JQuery but allows selectors on strings instead of elements.
 //Requires: HTML must be valid in order for this to work.
@@ -35,28 +31,6 @@
         ,convertMultipleToSingleWhitespace:function(str){//0.002ms
             //return str.replace(/(\s)\s*([^\s])/g,"$1"+"$2");
             return str.replace(/ {2,}/g,' ');
-        }
-        ,getRegexParenthesisNumber2:function(str,strMarker,strRegStart,strRegOr,strRegEnd){
-        //                                                  \\[\\s*,(match|match),\\s*\\]
-        //It builds a regex /[(match1|match2|match3|match4)]/
-        //Then returns the number of the matched or statement
-            //declare essential vars
-
-			var strQuickCheck = strRegStart+'('+strRegOr+')'+strRegEnd;
-			if(str.search(RegExp(strQuickCheck))===-1){return null;}
-			var wrapReg = function(strOr){
-				return new RegExp(strRegStart+'('+strOr+')'+strRegEnd);
-			},
-			arrRegOr = strRegOr.split('|'),
-			regOr,arrM;
-			for(var i=0,intLen = arrRegOr.length;i < intLen;++i){
-				regOr = wrapReg(arrRegOr[i]);
-				arrM = regOr.exec(regOr);
-				if(arrM){
-					return {intP:i,strMatch:arrM[1]}
-				}
-			}
-            return null;
         }
         ,getRegexParenthesisNumber1:function(str,strMarker,strRegStart,strRegOr,strRegEnd){
         //                                                  \\[\\s*,(match|match),\\s*\\]
@@ -289,34 +263,49 @@
     };
     //###########################################################################################################
 
+
     // _STQuery (public)
-    var STQuery = function(strHTML){
+    var STQuery = function(){
+    	var strHTML = (arguments.length > 0)?arguments[0]:'';
         return new _STQuery(strHTML);
     };
     var _STQuery = function(strHTML){
-        this.v = "alpha 0.8";
-        this.dateStamp = "2011-07-15_2000";
-        this.supported = "Mixed seperated selectors. Exmaple: #parent .category .subcat p";
-        this.notSupported = "chained classes. Example: .class.class.class";
+        this.v = "alpha 0.92";
+        this.dateStamp = "2011-09-01_2000";
+        this.supported = '[attr="value"], bind';
         this.objMarkers = new ClassMarkers();
         this.objMasks = new ClassMasks();
 
-		strHTML = lib.trim(strHTML);
-        this.initMarkers(strHTML);
-        this.strHTML = this.wrapTagPointers(strHTML);
+        if(strHTML!=''){
+			strHTML = lib.trim(strHTML);
+	        this.initMarkers(strHTML);
+	        this.strHTML = this.wrapTagPointers(strHTML);
+        }
     };
     _STQuery.prototype = {
         shared:{
             intLastWrappedPointer:0
+            ,data:{
+    	    	/* EXAMPLES:
+    	    	,'#strSelector':{
+    	    		click:function(evt){
+    	    			//do stuff here...
+    	    		}
+    	    	}*/
+    	    }
         }
-        ,
-        initMarkers:function(str){
+	    ,dataArrayTrigger:function(strSelector,strEventType){
+	    	var arr = this.shared.data[strSelector][strEventType].arr;
+			for(var i=0,intLen = arr.length;i < intLen;++i){
+				arr[i]();
+			};
+	    }
+        ,initMarkers:function(str){
             //create markers
             var objMarkers = this.objMarkers;
             var objM = objMarkers.addMarkers(str,'strMarkerHandle,strMarkerStart,strMarkerEnd');
         }
-        ,
-        wrapTagPointers:function(str){
+        ,wrapTagPointers:function(str){
             //If contains html
             if(str.search(/[<>]/)!==-1){
                 var objMarkers = this.objMarkers;
@@ -495,16 +484,30 @@
                 return arrCommaPointers;
             }
             ,parseSelector:function(str){
-                var regSquareBrackets = /\[([^\]]*)\]/g;
+                var regSquare = /\[([^\]]*)\]/g,//  .someClass[ name|="value" ]
+                regDirect = /([>\~\+])¤+/g;//       .someClass > .immediateChild
+                                           //       .someClass + .nextChild
+                                           //       .someClass ~ .prevChild
                 str = lib.trim(str);
-                if(str.search(regSquareBrackets)==-1){
+                if(str.search(regSquare)==-1 && str.search(regDirect)==-1){
                     return str.split(' ');
                 }else{
                     str = str.replace(/ /g,'¤');
-                    str = str.replace(regSquareBrackets,function($0,$1){return '['+$1.replace(/¤/g,' ')+']'});
+
+                    //maintain spaces in square brackets. Don't split these as seperate selectors
+                    str = str.replace(regSquare,function($0,$1){return '['+$1.replace(/¤/g,' ')+']'});
+                    //maintain spaces after markers like >,~,+ because the following selectors are direct descendants of these.
+                    str = str.replace(regDirect,function($0,$1){return $1 + ' '});
+                    
                     return str.split(/¤+/g);
                 }
-
+            }
+    
+            ,regOr:function(str){
+                return RegExp('(['+str+'])');
+            }
+            ,regNot:function(str){
+                return RegExp('([^'+str+'])');
             }
             ,findCollatedSpaced:function(strSelectorComma,arrExtractDefault,strMarkerHandle){//0.09ms
 
@@ -513,29 +516,43 @@
 				var arrSelectors = this.parseSelector(strSelectorComma),
                 arrExtract = arrExtractDefault,
                 arrResetPointers,
-                _top = _STQueryItem.prototype;
+                _top = _STQueryItem.prototype,
+                arrPreFiltered = null,
+                regStartChar = /[^\#\.>\+\~\[\:]/;
 
                 //iterate each spaced selector
                 for(var s=0,intLenSelectors = arrSelectors.length;s < intLenSelectors;++s){
-                    var strSelector = arrSelectors[s],
-                    arrResetExtract = [];
+                    var strSelector = arrSelectors[s];
 
-                    //reset arrResetPointers
+                    //get first character of strSelector. TAG, ID, CLASS, [ : > ~ + etc...
+                    var strStartChar = this.extractStartChar(strSelector,regStartChar);
+
+                    //update selector
+                    strSelector = (strStartChar!=='TAG')?strSelector.substr(1):strSelector;
+
+                    //reset arrResetPointers                    
+                    var arrResetExtract = [];
                     arrResetPointers = [];
 
                     //loop each extract
                     for(var e=0,intLenExtract = arrExtract.length;e < intLenExtract;++e){
-                        //collect each matched selector
+                        //collect each matched selector                        
                         var strEachExtractHTML = arrExtract[e],
-                        arrTempPointers = this.findMultipleSelectors(strSelector,strEachExtractHTML,strMarkerHandle,_top);
+                        arrTempPointers = this.findMultipleSelectors(_top, strStartChar, strSelector, strEachExtractHTML, strMarkerHandle, arrPreFiltered);
 
+                        if(!arrTempPointers){return [];}
                         //build new extract list from each selector
                         for(var p=0,intLenPointers = arrTempPointers.length;p < intLenPointers;++p){
                             var strPointer = arrTempPointers[p];
 
+//store strSelector against strPointer number
+_top.selectors[strPointer] = strSelector;
+
+                            if(strPointer=='' || strPointer=='>'){continue;}
                             //for each selector create a new extract list to loop in next iteration.
                             arrResetExtract.push(_top.extract(strMarkerHandle,strPointer,strEachExtractHTML));
                         }
+
                         //reset pointers to last matched items
                         arrResetPointers = arrResetPointers.concat(arrTempPointers);
                     }
@@ -544,173 +561,303 @@
                 }
                 return arrResetPointers;
             }
-            ,
-            findMultipleSelectors:function(strSelector,strHTML,strMarkerHandle,_top){//0.048ms
-                var strRegPointer = strMarkerHandle+'(\\d+)\\s',
-                strStart = strSelector.charAt(0);
-                strStart = strStart.replace(/[^\.\#]/,'TAG');
-                var args = Array.prototype.slice.call(arguments);
-                var arr = [strRegPointer].concat(args);
-                return this.selectorChoice[strStart].apply(this,arr);
+            ,extractStartChar:function(strSelector,regStartChar){
+                var strStartChar = strSelector.charAt(0);
+                strStartChar = strStartChar.replace(regStartChar,'TAG');
+                return strStartChar;
+            }
+            ,findMultipleSelectors:function(_top,  strStartChar, strSelector, strHTML, strMarkerHandle, arrPreFiltered){//0.048ms
+                //extract first part of the selector
+                //strSelector = 'TAG[1]#someID.someClass'
+
+                var strFirstSelector = this.extractFirstSelector(strSelector);
+                //strFirstSelector = 'TAG[1]'
+                var intPredicate= this.getPredicate(strSelector);
+                //intPredicate = 1
+
+                var strCropFirstSelector = this.cropFirstSelector(strStartChar,strFirstSelector);                
+                //strCropFirstSelector = 'TAG'
+
+                //match points against strFirstSelector
+                var arrPointers = this.selectorChoice[strStartChar].apply(this,[_top, strHTML, strMarkerHandle, arrPreFiltered, strCropFirstSelector, intPredicate]);
+
+                //get remaining selectors
+                var strRemainingSelectors = '';
+
+                if(strFirstSelector!=''){
+                    //strFirstSelector = 'TAG[1]'
+                    var intIndexNext = strFirstSelector.length;
+                    if(intPredicate===null && strStartChar!='[' && strStartChar!=':'){
+                        var intNextChar = strSelector.search(/[\#\.\:\[]/);
+                        intIndexNext = (intNextChar!=-1)?intNextChar:strSelector.length;
+                    }
+                    strRemainingSelectors = strSelector.substr(intIndexNext);
+                    //strRemainingSelectors = '#someID.someClass'
+                }
+
+                //repeat function to filter #item.multipleClass:button etc...
+                if(strRemainingSelectors.length!='' && arrPointers.length!==0){
+                    var strNextStartChar = strRemainingSelectors.charAt(0);
+                    //strNextStartChar = '#'
+
+                    strRemainingSelectors = (strNextStartChar=='.' || strNextStartChar=='#')?strRemainingSelectors.substr(1):strRemainingSelectors;
+                    
+                    //strRemainingSelectors = 'someID.someClass'
+
+                    arrPointers = this.findMultipleSelectors(_top, strNextStartChar, strRemainingSelectors, strHTML, strMarkerHandle, arrPointers);                    
+                }
+
+/*
+trace(' ');
+trace('findMultipleSelectors()');
+trace('strFirstSelector='+strFirstSelector);
+trace('intPredicate='+intPredicate);
+trace('strCropFirstSelector='+strCropFirstSelector);
+trace('strStartChar='+strStartChar);
+trace('strRemainingSelectors='+strRemainingSelectors);
+trace('strNextStartChar='+strNextStartChar);
+*/
+                return arrPointers;
+            }
+            ,extractFirstSelector:function(strSelector){
+
+                var intIndexNextChar = strSelector.search(/[\#\.\[\(]/),
+                strNextChar = strSelector.charAt(intIndexNextChar);
+                if(strNextChar=='('){
+                    //strSelector = 'TAG:contains(:eq(1)).someClass'
+
+                    return this.getMultipleParenthesis(strSelector);
+                   //return 'TAG:contains(:eq(1))'
+
+                }else if(strNextChar==='['){
+                    //strSelector = 'TAG[1].someClass'
+                    return strSelector.substring(0,strSelector.indexOf(']')+1);
+                    //return 'TAG[1]'
+                }else if(intIndexNextChar==-1){
+                     return strSelector;
+                }else{
+                    //strSelector = 'TAG#someId'
+                    return strSelector.substring(0,intIndexNextChar);
+                    //return 'TAG';
+                }
+                return null;
+
+                //extract selector from #id.class[asdf~]:asdf(asdf)
+                //[name|="value"]
+                //[name*="value"]
+                //[name~="value"]
+                //[name$="value"]
+                //[name="value"]
+                //[name^="value"]
+                //[name!="value"]
+                //:eq()
+                //:gt()
+                //:first-child
+                //:has(selector)
+                //:not(selector)
+                //:nth-child()
+                //:not(:contains);
+                //:contains()
+            }
+            ,getMultipleParenthesis:function(strSelector){
+                 //extract (((( ))))
+                var regP = /([\(\)])/g,
+                arrM,intP=0,intIndex = 0;
+                while(arrM = regP.exec(strSelector)){
+                    intP = (intP + (arrM[1]=='(')?1:-1);
+                    if(intP < 1){break;}
+                }
+                return strSelector.substring(0,regP.lastIndex);
+            }
+            ,cropFirstSelector:function(strStartChar,strFirstSelector){
+                //converts TAG[1]
+                //to TAG     
+
+                //or [1]
+                //to [1]
+                if(strStartChar=='[' || strStartChar==':'){
+                    return strFirstSelector;
+                }else{
+                    var intNextStartChar = strFirstSelector.search(/[\:\[]/),
+                    intEnd = (intNextStartChar===-1)?strFirstSelector.length:intNextStartChar;
+                    return strFirstSelector = strFirstSelector.substring(0,intEnd);
+                }
+            }
+            ,getPredicate:function(strFirstSelector){
+
+                strFirstSelector = this.cropForPredicate(strFirstSelector);
+                //extract arrFilterSelectors to get a number from either square brackets [3] or :eq(3) etc...
+                var strRegPred = '(\\[|\\:eq\\()(\\d+)(\\]|\\))';
+                var regPred = RegExp(strRegPred);
+                var arrM = regPred.exec(strFirstSelector);
+                if(arrM){
+                    var intPred = parseInt(arrM[2]);
+                    return intPred;
+                }
+                return null;
+            }
+            ,cropForPredicate:function(strSelector){
+                var intNextChar = strSelector.search(/[\.\#]/);
+                var intEnd = (intNextChar!==-1)?intNextChar:strSelector.length;
+                return strSelector.substring(0,intEnd);
             }
             ,selectorChoice:{
-                '#':function(){
-                     return arguments[4].objFindFn.findId.apply(this,arguments);
+                '#':function(_top){
+                     return _top.objFindFn['findId'].apply(this,arguments);
                 }
-                ,'.':function(){
-                     return arguments[4].objFindFn.findClasses.apply(this,arguments);
+                ,'.':function(_top){
+                     return _top.objFindFn['findClasses'].apply(this,arguments);
                 }
-                ,'TAG':function(){
-                     return arguments[4].objFindFn.findTags.apply(this,arguments);
+                ,':':function(_top){
+                    return _top.objFindFn['findColons'].apply(this,arguments);
+                }
+                ,'[':function(_top){
+                    return _top.objFilterPredicate.filterPredicate.apply(_top.objFilterPredicate,arguments);                    
+                }
+                ,'>':function(_top){
+                    return _top.objFindFn['findImmediateChild'].apply(this,arguments);
+                }
+                ,'+':function(_top){
+                    return _top.objFindFn['findBeforeNext'].apply(this,arguments);
+                }
+                ,'~':function(_top){
+                    return _top.objFindFn['findAfterPrev'].apply(this,arguments);
+                }
+                ,'TAG':function(_top){
+                     return _top.objFindFn['findTags'].apply(this,arguments);
                 }
             }
-            ,findId:function(strSelector,strHTML,strRegPointer,strMarkerHandle,_top){//0.013ms
-                var strSelectorStart = strSelector.substr(1).split(/[\[\.\#]/)[0],
-                strReg = strRegPointer+'<[^>]*id="'+strSelectorStart+'"',
-                strFilter = _top.objFilterFn.filter(strSelector,strReg,strHTML,strMarkerHandle);
-
-                if(strFilter){
-                    return [strFilter];
-                }else{
+            ,findId:function(_top, strHTML, strMarkerHandle, arrPreFiltered, strSelectorStart){//0.013ms
+                var arrPointers = [];
+                //match againts previously filtered items only.
+                if(arrPreFiltered!==null){
+                    var strReg = '<[^>]*id="'+strSelectorStart+'"';
+                    strReg = this.regexAgainstPrefiltered(strMarkerHandle, arrPreFiltered, strReg);
+                    arrPointers = this.matchAgainstPreFiltered(strHTML, strMarkerHandle, strReg, null, arrPreFiltered);
+                }else{//match single id
                     var intIndex = strHTML.indexOf('id="'+strSelectorStart+'"');
                     if(intIndex!=-1){
                         var strE = strHTML.substring(0,intIndex),
                         intHandle = strE.lastIndexOf(strMarkerHandle);
                         strE = strE.substr(intHandle);
-                        return [strE.substring(1,strE.indexOf(' '))];
+                        
+                        var strPointer = strE.substring(1,strE.indexOf(' '));
+                        arrPointers.push(strPointer);
                     }
                 }
-                return [];
+                return arrPointers;
             }
-            ,findTags:function(strRegPointer,strSelector,strHTML,strMarkerHandle,_top){
-                var arrPointers = [],
-                strSelectorStart = strSelector.split(/[\[\.\#]/)[0],
-                strRegTag = '<'+strSelectorStart+'[\\s:\\/>]',
-                strFilter = _top.objFilterFn.filter(strSelector,strRegTag,strHTML,strMarkerHandle);
-                if(strFilter){
-                    arrPointers.push(strFilter);
+            ,findTags:function(_top, strHTML, strMarkerHandle, arrPreFiltered, strSelectorStart, intPredicate){
+
+                var strReg = '<'+strSelectorStart+'[\\s\\:\\/>]',
+                arrPointers = [];
+                if(arrPreFiltered!==null){
+                    arrPointers = this.matchAgainstPreFiltered(strHTML, strMarkerHandle, strReg, intPredicate, arrPreFiltered);
                 }else{
-                    arrPointers = this.iterateEachPointer(strRegTag,strHTML,strMarkerHandle);
+                    arrPointers = this.iterateEachPointer(strHTML, strMarkerHandle, strReg, intPredicate);
+                }                            
+                return arrPointers;
+            }
+
+            ,findClasses:function(_top, strHTML, strMarkerHandle, arrPreFiltered, strSelectorStart, intPredicate){
+                var strReg = '<[^>]*class="?[^"]*["\\s]'+strSelectorStart+'["\\s]',
+                arrPointers = [];
+                if(arrPreFiltered!==null){
+                    arrPointers = this.matchAgainstPreFiltered(strHTML, strMarkerHandle, strReg, intPredicate, arrPreFiltered);
+                }else{
+                    arrPointers = this.iterateEachPointer(strHTML, strMarkerHandle, strReg, intPredicate);
                 }
                 return arrPointers;
             }
-            ,findClasses:function(strRegPointer,strSelector,strHTML,strMarkerHandle,_top){
+            ,iterateEachPointer:function(strHTML, strMarkerHandle, strReg, intPredicate){
                 var arrPointers = [],
-             //CLASS NAME
-                //get .someClass from .someClass[56]
-                strSelectorStart = (strSelector.substr(1)).split(/[\[\.\#]/)[0],
-                strRegClass = '<[^>]*class="?[^"]*["\\s]'+strSelectorStart+'["\\s]',
-                strFilter = _top.objFilterFn.filter(strSelector.substr(1),strRegClass,strHTML,strMarkerHandle);
-                if(strFilter){
-                    arrPointers.push(strFilter);
-                }else{
-                    arrPointers = this.iterateEachPointer(strRegClass,strHTML,strMarkerHandle);                    
-                }
-                return arrPointers;
-            }
-            ,iterateEachPointer:function(strReg,strHTML,strMarkerHandle){
-                var arrPointers = [],
-                regPointerAndMatch = RegExp(strReg,'g');
-                var arr = strHTML.split(regPointerAndMatch);
+                regMatchMultiple = RegExp(strReg,'g');
+                var arr = strHTML.split(regMatchMultiple);
+
                 if(arr[0].lastIndexOf(strMarkerHandle)==-1){return [];}
-                for(var i=0,intLen = (arr.length - 1); i < intLen;++i){
-                    var strItem = arr[i],
-                    intLastInd = strItem.lastIndexOf(strMarkerHandle),
-                    strItem2 = strItem.substr(intLastInd),
-                    strPointer = strItem2.substring(1,strItem2.indexOf(' '));
-                    arrPointers.push(strPointer);
+
+                if(intPredicate!==null){
+                    var strItem = arr[intPredicate];
+                    if(strItem){
+                        strPointer = this.getIPointer(strItem,strMarkerHandle);
+                        return [strPointer];
+                    }
+                }else{
+                    for(var i=0,intLen = (arr.length - 1); i < intLen;++i){
+                        var strPointer = this.getIPointer(arr[i],strMarkerHandle);
+                        arrPointers.push(strPointer);
+                    }
                 }
                 return arrPointers;
+            }
+            ,matchAgainstPreFiltered:function(strHTML, strMarkerHandle, strReg, intPredicate, arrPreFiltered){//0.04
+                var arr = [];
+                var regMatch = RegExp(strMarkerHandle + '('+arrPreFiltered.join('|') + ') ' + strReg,'g'),
+                arrM,intI=0;
+                while(arrM = regMatch.exec(strHTML)){
+                    if(intPredicate){
+                        if(intI===intPredicate){arr.push(arrM[1]); return arr;}
+                    }else{
+                        arr.push(arrM[1]);
+                    }
+                    ++intI;
+                }
+                return arr;
+            }
+            ,getIPointer:function(strItem,strMarkerHandle){
+                var intLastInd = strItem.lastIndexOf(strMarkerHandle),
+                strItem2 = strItem.substr(intLastInd),
+                strPointer = strItem2.substring(1,strItem2.indexOf(' '));
+                return strPointer;
             }
         }
-        ,objFilterFn:{
 
+        ,objFilterPredicate:{
             //#####################################################
             //filtering by predicate .selector[1] or h1[4] etc...
-            filter:function(strSelector,strReg,strHTML,strMarkerHandle){
-                if(strSelector.indexOf('[')!=-1){
-                    //Note: This function doesn't actually do any filtering itself
-                    //It builds a regex /[(match1|match2|match3|match4)]/
-                    //Then returns the correct function according to the parenthesis match
+            //or id, or class etc...
 
-                    //NOTE: filterHasAttr and filterAttrContains are yet to be coded, so currently won't be filtered.
-                    //but no error will be returned, it will simply filter all other matches and return the result
-                    var strRegOr = '\\d+|\\w+|\\w+\\*\\="[^"]*"',
-                    strFnFilter = 'filterPos,filterHasAttr,filterAttrContains';
+            filterPredicate:function(_top, strHTML, strMarkerHandle, arrPreFiltered, strSelectorStart){
+              //Note: This function doesn't actually do any filtering itself
+                //It builds a regex /[(match1|match2|match3|match4)]/
+                //Then returns the correct function according to the parenthesis match
 
-                    var objFn = lib.getRegexParenthesisNumber1(strSelector,'¤','\\[\\s*',strRegOr,'\\s*\\]');
-                    if(objFn){
-                        var intFn = objFn.intP;
-                        var strMatch = objFn.strMatch;
+                //NOTE: filterHasAttr and filterAttrContains are yet to be coded, so currently won't be filtered.
+                //but no error will be returned, it will simply filter all other matches and return the result
+                var strRegOr = '\\w+|\\w+\\=\\"[^\\"]*\\"',
+                strFnFilter = 'filterHasAttr,filterAttrEquals';
 
-                        var arrFnFilter = strFnFilter.split(',');
-                        var strFn = arrFnFilter[intFn];
-                        return this[strFn](strSelector,strReg,strHTML,strMarkerHandle);
-                    }
+                var objFn = lib.getRegexParenthesisNumber1(strSelectorStart,'¤','\\[\\s*',strRegOr,'\\s*\\]');
+                if(objFn){
+                    var intFn = objFn.intP;
+                    var strMatch = objFn.strMatch;
+
+                    var arrFnFilter = strFnFilter.split(',');
+                    var strFn = arrFnFilter[intFn];
+                    return this[strFn].apply(this,arguments);
                 }
                 return null;
             }
+
 			//###############################################################
 			//filter options
-            ,filterPos:function(strSelector,strReg,strHTML,strMarkerHandle){
-                var strPointer = null;
-                //get position
-                var intPosition = this.extractPos(strSelector);
-                if(intPosition){
-                    var regElem = RegExp(strReg,'g');
-                    strPointer = this.getPositionedPointer(strHTML,intPosition,regElem,strMarkerHandle);
-                }
-                return strPointer;
-            }
-            ,filterHasAttr:function(strSelector,strReg,strHTML,strMarkerHandle){
+            ,filterHasAttr:function(_top, strHTML, strMarkerHandle, arrPreFiltered, strSelectorStart){
                 //requires coding...
-                return null;
+                return [];
             }
-            ,filterAttrContains:function(strSelector,strReg,strHTML,strMarkerHandle){
+            ,filterAttrEquals:function(_top, strHTML, strMarkerHandle, arrPreFiltered, strSelectorStart){
                 //requires coding...
-                return null;
-            }
-			//###################################################################
-            ,
-            extractPos:function(strSelector){
-                var intPosition = null;
-                var strRegPredicate = /^[^\.]*\[\s*(\d+)\s*\]/;
-                var arrM = RegExp(strRegPredicate).exec(strSelector);
-                if(arrM){
-                    intPosition = parseInt(arrM[1]);
-                }
-                return intPosition;
-            }
-            ,
-            getPositionedPointer:function(str,intPosition,regElem,strMarkerHandle){
-                //this gets the regPointer for tag and class, but no need to get it for id.
-                var strPointer = null;
-                //var isMultipleClass = false;
-                //if(!isMultipleClass){
-                if(str.search(regElem)!==-1){
-                    //get element
-                    var arrSelectorMatches = str.split(regElem);
-                    //get item[position]
-                    var strHTMLItem = arrSelectorMatches[intPosition];
-                    strPointer = this.convertRegPointerToHTMLPointer(strHTMLItem,strMarkerHandle);
+                var strRegKeyValue = '(\\w+)\\=\\"([^\\"]*)\\"',
+                regKeyValue = RegExp(strRegKeyValue),
+                arrM = regKeyValue.exec(strSelectorStart);
+                
+                var strKey = arrM[1],
+                strValue = arrM[2];
+                var strReg = '<[^>]*'+strKey+'\\=\\"'+strValue+'"';
+                var arrPointers = _top.objFindFn.matchAgainstPreFiltered(strHTML, strMarkerHandle, strReg, null, arrPreFiltered)
 
-                }
-                //}
-                return strPointer;
+                return arrPointers;
             }
-            ,
-            convertRegPointerToHTMLPointer:function(strHTMLItem,strMarkerHandle){
-                //get pointer
-                var strPointer = null;
-                var regPointerAndTag = RegExp(strMarkerHandle+'(\\d+)\\s');
-                var arrM = regPointerAndTag.exec(strHTMLItem);
-                if(arrM){
-                    strPointer = ''+arrM[1];
-                }
-                return strPointer;
-            }
-            //end -  by predicate
-            //#####################################################
 
         }
 		,find:function(strSelectors){//0.123ms
@@ -751,6 +898,7 @@
                 strRegPointer = (strMarkerHandle + strPointer + ' ');
                 return '('+strRegPointer + strRegF + strRegPointer+')';
             };
+
             var strRegElem;
             //if attribute does not exist, and arrAddAttr ==true, then add the attribute.
             if(arrAddAttr){
@@ -800,76 +948,93 @@
             this.arrPointers = [objInst.shared.intLastWrappedPointer - 1];
             return this;
         }
-        ,
+        ,wrapNew:function(strNew){
+            strNew = ''+strNew;
+            if(strNew.indexOf('<')!=-1){
+                //wrap tag pointers before adding.
+                strNew = this.objInst.renewAndWrapTagPointers(strNew);
+            }
+            return strNew;
+        }
+         ,
         append:function(strNew){
+        	var _parent = this;
             return this.regexElem(strNew,'<[^>]*>[\\w\\W]*)(<\\/[^>]*>',function(arg){
-                return arg[1] + strNew + arg[2];
+                return arg[1] + _parent.wrapNew(strNew) + arg[2];
                 },'all');
         }
         ,
         prepend:function(strNew){
+        	var _parent = this;
             return this.regexElem(strNew,'<[^>]*>)([\\w\\W]*<\\/[^>]*>',function(arg){
-                return arg[1] + strNew + arg[2];
+                return arg[1] + _parent.wrapNew(strNew) + arg[2];
                 },'all');
         }
         ,
         before:function(strNew){
+        	var _parent = this;
             return this.regexElem(strNew,'[\\w\\W]*',function(arg){
-                return strNew + arg[1];
+                return _parent.wrapNew(strNew) + arg[1];
                 },'all');
         }
         ,
         after:function(strNew){
+        	var _parent = this;
             return this.regexElem(strNew,'[\\w\\W]*',function(arg){
-                return arg[1] + strNew;
+                return arg[1] + _parent.wrapNew(strNew);
                 },'all');
         }
-        ,getOuterHTMLArray:function(){//,fnParse
+        ,getOuterHTML:function(){//,fnParse //0.028
             var fnParse = (arguments.length > 0)?arguments[0]:function(str){return str;},
             objInst = this.objInst,
             strMarkerHandle = objInst.objMarkers.objM['strMarkerHandle'],
             strHTML = objInst.strHTML,
-            arrPointers = this.arrPointers,arr=[],strPointer,strRegPointer,strExtract,
-            arr = [];
+            arrPointers = this.arrPointers,strPointer,strRegPointer,strExtract,
+            strReturn = '';
 
             //return html
             for(var i=0,intLen = arrPointers.length;i < intLen;++i){
                 strPointer = arrPointers[i];
                 strRegPointer = (strMarkerHandle + strPointer + ' ');
                 strExtract = strHTML.substring(strHTML.indexOf(strRegPointer) + strRegPointer.length,strHTML.lastIndexOf(strRegPointer));
-
-            //parse to get innerHTML
-                strExtract = fnParse(strExtract);
-
-                strExtract = strExtract.replace(RegExp(strMarkerHandle+'\\d+ ','g'),'');
-                arr.push(strExtract);
+                //parse to get innerHTML
+                strExtract = fnParse(strExtract);                
+                strReturn = (strReturn + strExtract);
             }
-            return arr;
+            strReturn = strReturn.replace(RegExp(strMarkerHandle+'\\d+ ','g'),'');
+            return strReturn;
         }
         ,
         html:function(){
+            var _parent = this;
             var strNew = (arguments.length > 0)?arguments[0]:null;
             if(strNew){
                 return this.regexElem(strNew,'<[^>]*>)[\\w\\W]*(<\\/[^>]*>',function(arg){
-                    return arg[1] + strNew + arg[2];
+
+                    return arg[1] + _parent.wrapNew(strNew) + arg[2];
                 },'all');
             }else{
-                var arrHTML = this.getOuterHTMLArray(function(str){
+                var strCurrentHTML = this.getOuterHTML(function(str){
                     return str = str.substring(str.indexOf('>')+1,str.lastIndexOf('</'));
                 });
-                return arrHTML.join();
+                return strCurrentHTML;
             }
         },
         outerHtml:function(){
+            var _parent = this;
             var strNew = (arguments.length > 0)?arguments[0]:null;
             if(strNew){
-                return this.regexElem(strNew,')<[^>]*>[\\w\\W]*<\\/[^>]*>(',function(arg){
-                    return arg[1] + strNew + arg[2];
+                return this.regexElem(strNew,')(<[^>]*>[\\w\\W]*<\\/[^>]*>|<[^>]*\\/>)(',function(arg){
+                    return arg[1] + _parent.wrapNew(strNew) + arg[3];
                 },'all');
             }else{
-                var arrOuterHTML = this.getOuterHTMLArray();
-                return arrOuterHTML.join('\n');
+                var strCurrentHTML = this.getOuterHTML();
+                return strCurrentHTML;
             }
+        }
+        ,outerHTML:function(){
+            var strNew = (arguments.length > 0)?arguments[0]:null;
+            return this.outerHtml(strNew);
         }
 		,clone:function(){
 			return this.html();
@@ -950,15 +1115,19 @@
 		}
 		,objParentFn:{
 			getEachParentPointer:function(strMarkerHandle,strPointer,strHTML){
-				//allows the accessing of the top element, ie html
-				var strRegPointer = strMarkerHandle + strPointer + ' ',
-				strAnonyHandle = strMarkerHandle + '\\d+ ',
-				strRegParent = strMarkerHandle+'(\\d+) <([^\\/][^>]*[^\\/]|[\\w])>[^'+strMarkerHandle+']*([^'+strMarkerHandle+']*('+strAnonyHandle+')[\\w\\W]*\\4){0,}'+strRegPointer+'<[^\\/]',
+				var strRegOpenClosed = '('+strMarkerHandle+'\\d+ )[\\w\\W]*\\1',
+				regOpenClosed = RegExp(strRegOpenClosed,'g');
+				strHTML = strHTML.substring(0,strHTML.indexOf(strMarkerHandle + strPointer + ' '));
+				strHTML = strHTML.replace(regOpenClosed,'');
+
+				var strRegParent = strMarkerHandle+'(\\d+) <[^\\/][^>]*>\\s*$',
 				regParent = RegExp(strRegParent);
+
 				var arrM = regParent.exec(strHTML);
 				if(!arrM){return null;}
 
 				var strEachParentPointer = arrM[1];
+
 				return strEachParentPointer;
 			}
 			//iterate between getClosestPointer and getTraversedParentPointer;
@@ -1043,10 +1212,126 @@
             if(arrM){this.arrPointers = [arrM[1]];}
             return this;
         }
+        ,changeEachPointer:function(objInst,strMarkerHandle,strRegBefore,strRegAfter){
+            var strHTML = objInst.strHTML,
+            arrPointers = this.arrPointers,
+            arr = [],
+            strReg,reg,arrM;
+            //return html
+            for(var i=0,intLen = arrPointers.length;i < intLen;++i){
+                strReg = (strRegBefore + (strMarkerHandle + arrPointers[i] + ' ') + strRegAfter);
+                reg = RegExp(strReg);
+                arrM = reg.exec(strHTML);
+                if(arrM){arr.push(arrM[2]);}
+            }
+            this.arrPointers = arr;
+        }
+        ,prev:function(){
+            var objInst = this.objInst,
+            strMarkerHandle = objInst.objMarkers.objM['strMarkerHandle'];
+            this.changeEachPointer(objInst,strMarkerHandle,'<(\\/[^>]*|[^\\/][^>]*\\/)>'+strMarkerHandle + '(\\d+) [^<]*','');
+            return this;
+        }
+        ,next:function(){
+            var objInst = this.objInst,
+            strMarkerHandle = objInst.objMarkers.objM['strMarkerHandle'];
+            this.changeEachPointer(objInst,strMarkerHandle,'<(\\/[^>]*|[^\\/][^>]*\\/)>','[^<]*'+strMarkerHandle + '(\\d+) ');
+            return this;
+        }
+
+
+        //########################################################
+        //binding events
+        ,bind:function(strEventType,fnCallback){
+//trace(' ');
+//trace('ST bind()');
+        	//example of user:
+        	//ST.top().bind('dblclick',function(evt){});
+
+        	var arrPointers = this.arrPointers;
+
+        	for(var i=0, intLen = arrPointers.length; i < intLen;++i){
+        		var strPointer = arrPointers[i];
+
+        		//get the original selector for this pointer.
+        		var strSelector = this.getSelector(strPointer);
+
+
+//trace('original pointer='+strPointer);
+//trace('original selector='+strSelector);
+
+        		var objData = STQuery().shared.data;
+
+        		//store the bind event into STQuery data object
+        		if(!objData.hasOwnProperty(strSelector)){
+        			objData[strSelector] = {};
+        		};
+
+        		if(!objData[strSelector].hasOwnProperty(strEventType)){
+        			objData[strSelector][strEventType] = {};
+        			objData[strSelector][strEventType].arr = [];
+        		}
+
+        		//populate the select eventype data array with each callback function
+        		objData[strSelector][strEventType].arr.push(fnCallback);
+
+        		//add an onEvent attribute to the specific selector to call the STQuery data function.
+        		//reset arrPointers explicitly to each single pointer
+        		this.arrPointers = [strPointer];
+        		this.attr('on'+strEventType,"STQuery().dataArrayTrigger('"+strSelector+"','"+strEventType+"')");
+        	}
+
+        	//return arrPointers back to normal
+        	this.arrPointers = arrPointers;
+
+        	return this;
+        }
+        ,selectors:{
+        	//example
+        	//2:'#asdf'
+        }
+        ,getSelector:function(i){
+        	return this.selectors[i];
+        }
+        ,first:function(){
+        	var arrPointers = this.arrPointers;
+        	arrPointers = arrPointers.reverse();
+            this.arrPointers = [arrPointers.shift()];
+            return this;
+        }
+        ,last:function(){
+        	var arrPointers = this.arrPointers;
+        	arrPointers = arrPointers.reverse();
+            this.arrPointers = [arrPointers.pop()];
+            return this;
+        } 
     };
     //###########################################################################################################
     window.STQuery = STQuery;
 }(window));
 
+/*
+ //http://ejohn.org/apps/workshop/adv-talk/#9
 
+ JQUERY METHOD
+
+ $("<li><a></a></li>") // li
+  .find("a") // a
+    .attr("href", "http://ejohn.org/") // a
+    .html("John Resig") // a
+  .end() // li
+  .appendTo("ul");
+
+//using fragments
+	var div = document.createElement("div");
+	div.innerHTML = "<li><a></a></li>";
+	var fragment = document.createDocumentFragment();
+	while ( div.firstChild ) {
+  	fragment.appendChild( div.firstChild );
+	}
+
+//getting all the events data
+/$('selector').data('events);
+
+ */
 
